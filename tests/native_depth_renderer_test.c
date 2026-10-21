@@ -8,6 +8,10 @@
 #include "../main.c"
 #undef main
 
+#include "native_drift_camera_checks.h"
+#include "native_camera_options_checks.h"
+#include "native_boss_cutscene_checks.h"
+
 static POLY_G3 depthTestPolys[4];
 static POLY_FT3 depthTestTexture;
 static DR_PSYX_DRAW3D depthTestMarkers[4];
@@ -1967,6 +1971,13 @@ static void EngineTest_SavePersistence(const char *root)
 
 int main(int argc, char **argv)
 {
+	if (argc == 2 && strcmp(argv[1], "--boss-cutscene-only") == 0)
+	{
+		BossCutsceneTest();
+		BossDoorControlTest();
+		puts("Boss cutscene completion and driving handoff passed");
+		return 0;
+	}
 	if (argc == 2 && strcmp(argv[1], "--hud-aspect-only") == 0)
 	{
 		AspectTest_HudTransitions();
@@ -2064,6 +2075,18 @@ int main(int argc, char **argv)
 	{
 		EngineTest_Physics();
 		puts("Independent engine physics checks passed");
+		return 0;
+	}
+	if (argc == 2 && strcmp(argv[1], "--drift-camera-only") == 0)
+	{
+		DriftCameraTest();
+		puts("Drift camera recentering checks passed");
+		return 0;
+	}
+	if (argc == 2 && strcmp(argv[1], "--camera-options-only") == 0)
+	{
+		CameraOptionsTest();
+		puts("Live camera options checks passed");
 		return 0;
 	}
 	if (argc == 3 && strcmp(argv[1], "--engine-config-check") == 0)
@@ -2165,6 +2188,8 @@ int main(int argc, char **argv)
 		    {"smoothed_ai", NATIVE_MENU_STRING_AI_PHYSICS, &gNativeSmoothedAIEnabled, 0, 1},
 		    {"smoothed_collisions", NATIVE_MENU_STRING_COLLISION_PHYSICS, &gNativeSmoothedCollisionEnabled, 0, 1},
 		    {"smoothed_steering", NATIVE_MENU_STRING_STEERING_PHYSICS, &gNativeSmoothedSteeringEnabled, 0, 1},
+		    // -1 is "boot prompt not answered yet", shown as off.
+		    {"update_check", NATIVE_MENU_STRING_UPDATE_CHECK, &gNativeUpdateCheck, -1, 1},
 		};
 
 		for (unsigned int sweep = 0; sweep < sizeof(sweeps) / sizeof(sweeps[0]); sweep++)

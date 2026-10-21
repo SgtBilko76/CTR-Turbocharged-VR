@@ -74,6 +74,23 @@ if(NOT CTR_NATIVE_GIT_HASH)
     set(CTR_NATIVE_GIT_HASH "unknown")
 endif()
 
+# The commit's time, sent with the commit by the optional update check: the
+# website compares times so a build newer than its downloads isn't offered an
+# older one. 0 (unknown) skips the check.
+execute_process(
+    COMMAND git log -1 --format=%ct
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE CTR_NATIVE_BUILD_TIME
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT CTR_NATIVE_BUILD_TIME MATCHES "^[0-9]+$")
+    set(CTR_NATIVE_BUILD_TIME "0")
+endif()
+# Which of the website's build lists the update check compares against.
+set(CTR_NATIVE_UPDATE_CHANNEL "stable" CACHE STRING "Update check channel: stable or experimental")
+set_property(CACHE CTR_NATIVE_UPDATE_CHANNEL PROPERTY STRINGS stable experimental)
+
 execute_process(
     COMMAND git diff --quiet --exit-code
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -168,6 +185,8 @@ target_compile_definitions(ctr_native PRIVATE
     BUILD=926
     CTR_NATIVE_VERSION=\"${CTR_NATIVE_VERSION}\"
     CTR_NATIVE_BUILD_ID=\"${CTR_NATIVE_BUILD_ID}\"
+    CTR_NATIVE_BUILD_TIME=\"${CTR_NATIVE_BUILD_TIME}\"
+    CTR_NATIVE_UPDATE_CHANNEL=\"${CTR_NATIVE_UPDATE_CHANNEL}\"
     CTR_PRODUCT_NAME=\"${CTR_PRODUCT_NAME}\"
 )
 if(NOT EMSCRIPTEN)
@@ -435,6 +454,11 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         add_test(NAME ctr_native_aspect_renderer COMMAND ctr_native_depth_renderer_test --aspect-renderer-only)
         add_test(NAME ctr_native_oxide_unlock COMMAND ctr_native_depth_renderer_test --oxide-unlock-only)
         add_test(NAME ctr_native_engine_physics COMMAND ctr_native_depth_renderer_test --engine-physics-only)
+        add_test(NAME ctr_native_drift_camera COMMAND ctr_native_depth_renderer_test --drift-camera-only)
+        add_test(NAME ctr_native_camera_options COMMAND ctr_native_depth_renderer_test --camera-options-only)
+        add_test(NAME ctr_native_boss_cutscene COMMAND ctr_native_depth_renderer_test --boss-cutscene-only)
+        file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/camera-options-test")
+        set_tests_properties(ctr_native_camera_options PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/camera-options-test")
         add_test(NAME ctr_native_unlock_menu COMMAND ctr_native_depth_renderer_test --unlock-menu-only)
         add_test(NAME ctr_native_preset_input COMMAND ctr_native_depth_renderer_test --preset-input-only)
         add_test(NAME ctr_native_engine_lifecycle COMMAND ctr_native_depth_renderer_test --engine-lifecycle-only)
