@@ -33,10 +33,10 @@ options can remap everything.
 | B | Circle | weapon |
 | X | Square | brake / reverse |
 | Y | Triangle | |
-| Right trigger | R2 | |
-| Left trigger | L2 | |
-| Right grip | R1 | jump / power-slide |
-| Left grip | L1 | jump / power-slide |
+| Right trigger | R1 | hop / power-slide (hold while steering) |
+| Left trigger | L2 | camera near / far |
+| Right grip | R2 | |
+| Left grip | L1 | hop; tap during a power-slide for a turbo boost |
 | Left stick | analog stick | steer |
 | Right stick | D-pad | menus |
 | Left stick click | Select | |
