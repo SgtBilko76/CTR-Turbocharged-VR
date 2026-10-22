@@ -16,9 +16,10 @@
  * Touch controllers become one virtual SDL gamepad (vendor 0x1209), which the
  * game opens like any other pad:
  *
- *   right trigger -> R1 (hop / power-slide)      A B X Y  -> Cross Circle Square Triangle
- *   right grip    -> R2                          left stick       -> analog stick
- *   left trigger  -> L2 (camera distance)        left grip        -> L1 (hop / slide boost)
+ *   right trigger -> Cross (accelerate)          A B X Y  -> Cross Circle Square Triangle
+ *   left trigger  -> Square (brake)              left stick       -> analog stick
+ *   right grip    -> R1 (hop / power-slide)      left grip        -> L1 (hop / slide boost)
+ *   right stick click -> L2 (camera distance)
  *   right stick                  -> D-pad        left stick click -> Select
  *   left menu button             -> Start        right stick click -> R3
  *   hold both stick clicks 1 s   -> recentre the screen
@@ -1206,25 +1207,28 @@ static void CtrQuest_UpdateInput(void)
 	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_LEFTY, CtrQuest_AxisValue(-left.y));
 	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHTX, 0);
 	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHTY, 0);
-	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, CtrQuest_AxisValue(s_fake[FAKE_L2] ? 1.0f : (focused ? CtrQuest_GetFloat(s_triggerAction, HAND_LEFT) : 0.0f)));
-	/* Right hand: trigger = R1 (power-slide is held, the index finger holds
-	 * best), grip = R2. */
-	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, CtrQuest_AxisValue(s_fake[FAKE_R2] ? 1.0f : (focused ? CtrQuest_GetFloat(s_gripAction, HAND_RIGHT) : 0.0f)));
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_SOUTH, s_fake[FAKE_A] || (focused && CtrQuest_GetBool(s_aAction, -1)));
+	/* Triggers: right = accelerate (Cross), left = brake (Square), with
+	 * hysteresis so a half-pulled trigger doesn't flicker. A and X still work. */
+	static int rightTriggerHeld;
+	static int leftTriggerHeld;
+	{
+		float rightPull = focused ? CtrQuest_GetFloat(s_triggerAction, HAND_RIGHT) : 0.0f;
+		float leftPull = focused ? CtrQuest_GetFloat(s_triggerAction, HAND_LEFT) : 0.0f;
+		rightTriggerHeld = rightTriggerHeld ? (rightPull > 0.25f) : (rightPull > 0.45f);
+		leftTriggerHeld = leftTriggerHeld ? (leftPull > 0.25f) : (leftPull > 0.45f);
+	}
+	/* L2 (camera near/far) on the right stick click; R2 is unused in races. */
+	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, (s_fake[FAKE_L2] || (rightClick && !leftClick)) ? 32767 : 0);
+	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, s_fake[FAKE_R2] ? 32767 : 0);
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_SOUTH, s_fake[FAKE_A] || rightTriggerHeld || (focused && CtrQuest_GetBool(s_aAction, -1)));
 	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_EAST, s_fake[FAKE_B] || (focused && CtrQuest_GetBool(s_bAction, -1)));
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_WEST, s_fake[FAKE_X] || (focused && CtrQuest_GetBool(s_xAction, -1)));
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_WEST, s_fake[FAKE_X] || leftTriggerHeld || (focused && CtrQuest_GetBool(s_xAction, -1)));
 	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_NORTH, s_fake[FAKE_Y] || (focused && CtrQuest_GetBool(s_yAction, -1)));
 	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, s_fake[FAKE_L1] || focused && CtrQuest_GetFloat(s_gripAction, HAND_LEFT) > 0.5f);
-	{
-		/* Hysteresis so a half-pulled trigger doesn't flicker the slide. */
-		static int rightTriggerHeld;
-		float pull = focused ? CtrQuest_GetFloat(s_triggerAction, HAND_RIGHT) : 0.0f;
-		rightTriggerHeld = rightTriggerHeld ? (pull > 0.25f) : (pull > 0.45f);
-		CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, s_fake[FAKE_R1] || rightTriggerHeld);
-	}
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, s_fake[FAKE_R1] || (focused && CtrQuest_GetFloat(s_gripAction, HAND_RIGHT) > 0.5f));
 	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_START, s_fake[FAKE_START] || (focused && CtrQuest_GetBool(s_menuAction, -1)));
 	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_BACK, s_fake[FAKE_SELECT] || (leftClick && !rightClick));
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_RIGHT_STICK, rightClick && !leftClick);
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_RIGHT_STICK, 0);
 	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_DPAD_UP, s_fake[FAKE_UP] || (focused && dpad[0]));
 	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_DPAD_DOWN, s_fake[FAKE_DOWN] || (focused && dpad[1]));
 	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_DPAD_LEFT, s_fake[FAKE_LEFT] || (focused && dpad[2]));

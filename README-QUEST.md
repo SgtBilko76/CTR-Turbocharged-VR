@@ -29,18 +29,18 @@ options can remap everything.
 
 | Touch | PlayStation | In a race (default) |
 |---|---|---|
-| A | Cross | accelerate |
-| B | Circle | weapon |
+| Right trigger | Cross | accelerate |
+| Left trigger | Square | brake / reverse |
+| A | Cross | accelerate, confirm in menus |
+| B | Circle | weapon, back in menus |
 | X | Square | brake / reverse |
 | Y | Triangle | |
-| Right trigger | R1 | hop / power-slide (hold while steering) |
-| Left trigger | L2 | camera near / far |
-| Right grip | R2 | |
+| Right grip | R1 | hop / power-slide (hold while steering) |
 | Left grip | L1 | hop; tap during a power-slide for a turbo boost |
 | Left stick | analog stick | steer |
 | Right stick | D-pad | menus |
+| Right stick click | L2 | camera near / far |
 | Left stick click | Select | |
-| Right stick click | R3 | |
 | Menu button (left) | Start | pause |
 
 Hold **both stick clicks for one second** to put the screen back in front of you.
