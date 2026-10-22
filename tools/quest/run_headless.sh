@@ -26,6 +26,8 @@ for st in "$@"; do
     shot:*) ffmpeg -loglevel error -y -f x11grab -video_size 1920x1200 -i :77 -frames:v 1 "$S/shots/${TAG}_${st#shot:}.png";;
     click:*) xy=${st#click:}; "$T/xkey" click "${xy%,*}" "${xy#*,}";;
     move:*) xy=${st#move:}; "$T/xkey" move "${xy%,*}" "${xy#*,}";;
+    keydown:*) "$T/xkey" down "${st#keydown:}";;
+    keyup:*) "$T/xkey" up "${st#keyup:}";;
     hold:*) k=${st#hold:}; "$T/xkey" tap "${k%%:*}" "${k##*:}";;
     *) "$T/xkey" tap "$st"; sleep 0.4;;
   esac
