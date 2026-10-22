@@ -81,7 +81,9 @@ static struct
 	float screenHeight;     /* screen_height: metres above eye level */
 	float refreshRate;      /* refresh_rate: Hz (72, 80, 90, 120); the highest available <= this */
 	int flipY;              /* flip_y: 1 = flip the picture vertically */
-} s_cfg = {1920, 1080, 3.0f, 2.4f, 0.0f, 120.0f, 0};
+	float steerDeadzone;    /* steer_deadzone: stick travel (0..1) ignored around centre */
+	float steerFull;        /* steer_full: stick travel (0..1) that gives full steering */
+} s_cfg = {1920, 1080, 3.0f, 2.4f, 0.0f, 120.0f, 0, 0.08f, 0.80f};
 /* 120 Hz by default: the game presents at 60 FPS, so every frame is shown
  * exactly twice (72 Hz would repeat every fifth frame and judder). */
 
@@ -110,10 +112,14 @@ static void CtrQuest_LoadConfig(void)
 		else if (strcmp(key, "screen_height") == 0) s_cfg.screenHeight = value;
 		else if (strcmp(key, "refresh_rate") == 0) s_cfg.refreshRate = value;
 		else if (strcmp(key, "flip_y") == 0) s_cfg.flipY = (int)value;
+		else if (strcmp(key, "steer_deadzone") == 0) s_cfg.steerDeadzone = value;
+		else if (strcmp(key, "steer_full") == 0) s_cfg.steerFull = value;
 	}
 	fclose(file);
 	if (s_cfg.screenPixelsW < 320 || s_cfg.screenPixelsW > 4096) s_cfg.screenPixelsW = 1920;
 	if (s_cfg.screenPixelsH < 240 || s_cfg.screenPixelsH > 4096) s_cfg.screenPixelsH = 1080;
+	if (s_cfg.steerDeadzone < 0.0f || s_cfg.steerDeadzone > 0.5f) s_cfg.steerDeadzone = 0.08f;
+	if (s_cfg.steerFull < s_cfg.steerDeadzone + 0.1f || s_cfg.steerFull > 1.0f) s_cfg.steerFull = 0.80f;
 	LOGI("vr.cfg: %dx%d px, %.2f m wide at %.2f m, %.0f Hz", s_cfg.screenPixelsW, s_cfg.screenPixelsH, s_cfg.screenWidth,
 	     s_cfg.screenDistance, s_cfg.refreshRate);
 }
@@ -971,6 +977,48 @@ static Sint16 CtrQuest_AxisValue(float v)
 	return (Sint16)(v * 32767.0f);
 }
 
+/* Steering axis for the game. CTR ignores the first 48/128 of a PS1 stick,
+ * gives only 20 % of the turn rate over the next 47 units and full steering
+ * only at the very edge (127/128), which a Touch thumbstick rarely reaches
+ * (0.93-0.98 measured): curves got 55-70 % of the kart's turn rate.
+ * Invert that curve (VehPhysJoystick_GetStrength, default wheel data), so the
+ * turn rate grows evenly from steer_deadzone to steer_full. The curve itself
+ * tops out at 73 % one unit before the edge, so from there on the stick goes
+ * to the edge (100 %). The kart's maximum turn rate is unchanged. */
+static Sint16 CtrQuest_SteerAxis(float x)
+{
+	const float gameDead = 48.0f;  /* RACING_WHEEL_DEFAULT_DEAD_ZONE */
+	const float gameDist = 94.0f;  /* RACING_WHEEL_DEFAULT_STRENGTH_DISTANCE */
+	const float gameEdge = 127.0f; /* RACING_WHEEL_DEFAULT_RANGE: full steer */
+	float magnitude = fabsf(x);
+	float f;
+	float units;
+
+	if (magnitude <= s_cfg.steerDeadzone)
+	{
+		return 0;
+	}
+	f = (magnitude - s_cfg.steerDeadzone) / (s_cfg.steerFull - s_cfg.steerDeadzone);
+	if (f > 1.0f)
+	{
+		f = 1.0f;
+	}
+	/* wanted turn-rate fraction f -> game stick units from centre */
+	if (f <= 0.2f)
+	{
+		units = gameDead + (f / 0.2f) * (gameDist * 0.5f);
+	}
+	else
+	{
+		units = gameDead + gameDist * 0.5f + ((f - 0.2f) / 0.8f) * (gameDist * 0.5f);
+	}
+	if (units > gameEdge - 1.0f)
+	{
+		units = gameEdge + 0.5f;
+	}
+	return CtrQuest_AxisValue((x < 0.0f ? -units : units) / 128.0f);
+}
+
 static void CtrQuest_SetButton(int button, int down)
 {
 	SDL_SetJoystickVirtualButton(s_pad, button, down != 0);
@@ -1203,7 +1251,7 @@ static void CtrQuest_UpdateInput(void)
 	}
 
 	SDL_LockJoysticks();
-	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_LEFTX, CtrQuest_AxisValue(left.x));
+	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_LEFTX, CtrQuest_SteerAxis(left.x));
 	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_LEFTY, CtrQuest_AxisValue(-left.y));
 	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHTX, 0);
 	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHTY, 0);

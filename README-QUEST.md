@@ -56,6 +56,8 @@ Hold **both stick clicks for one second** to put the screen back in front of you
 | `screen_height` | 0.0 | metres above eye level |
 | `refresh_rate` | 120 | display refresh rate (72, 80, 90, 120) |
 | `screen_pixels_w` / `screen_pixels_h` | 1920 / 1080 | game resolution |
+| `steer_deadzone` | 0.08 | stick travel ignored around the centre |
+| `steer_full` | 0.80 | stick travel for full steering (lower = more sensitive) |
 
 ## Building
 
