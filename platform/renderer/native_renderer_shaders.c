@@ -588,7 +588,7 @@ internal int NativeRenderer_Shader_CheckProgramStatus(GLuint program)
 
 // GLSL ES has no noperspective qualifier; there everything interpolates in
 // perspective, which only differs from desktop for PGXP Gouraud shading.
-#ifdef __EMSCRIPTEN__
+#if CTR_NATIVE_GLES
 #define GLSL_NOPERSPECTIVE_DEFINE "	#define PSX_NOPERSPECTIVE\n"
 #else
 #define GLSL_NOPERSPECTIVE_DEFINE "	#define PSX_NOPERSPECTIVE noperspective\n"
@@ -599,10 +599,17 @@ internal ShaderID NativeRenderer_Shader_Compile(const char *source, bool isPsxSh
 	const char *GLSL_HEADER_VERT =
 #ifdef __EMSCRIPTEN__
 	    "	#version 300 es\n"
+	    "	precision lowp  int;\n"
+#elif CTR_NATIVE_GLES
+	    "	#version 320 es\n"
+	    "	precision highp int;\n"
+	    "	precision highp usampler2D;\n"
+	    "	precision highp isampler2D;\n"
+	    "	precision highp sampler2D;\n"
 #else
 	    "	#version 140\n"
-#endif
 	    "	precision lowp  int;\n"
+#endif
 	    "	precision highp float;\n"
 #ifndef __vita__
 	    "	#define varying   out\n"
@@ -614,15 +621,22 @@ internal ShaderID NativeRenderer_Shader_Compile(const char *source, bool isPsxSh
 	const char *GLSL_HEADER_FRAG =
 #ifdef __EMSCRIPTEN__
 	    "	#version 300 es\n"
+	    "	precision lowp  int;\n"
+#elif CTR_NATIVE_GLES
+	    "	#version 320 es\n"
+	    "	precision highp int;\n"
+	    "	precision highp usampler2D;\n"
+	    "	precision highp isampler2D;\n"
+	    "	precision highp sampler2D;\n"
 #else
 	    "	#version 140\n"
-#endif
 	    "	precision lowp  int;\n"
+#endif
 	    "	precision highp float;\n"
 #ifndef __vita__
 	    "	#define varying     in\n"
 	    "	#define texture2D   texture\n" GLSL_NOPERSPECTIVE_DEFINE "	out vec4 fragColor;\n"
-#ifdef __EMSCRIPTEN__
+#if CTR_NATIVE_GLES
 	    "\t#define gl_FragColor fragColor\n"
 #endif
 #endif

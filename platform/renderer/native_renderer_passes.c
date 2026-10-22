@@ -101,7 +101,11 @@ int NativeRenderer_BindProjectedWorld(int enable)
 		                                s_projectedWorldTarget.height);
 		glDepthMask(GL_TRUE);
 		glStencilMask(0xff);
+#if CTR_NATIVE_GLES
+		glClearDepthf(1.0f);
+#else
 		glClearDepth(1.0);
+#endif
 		glClearStencil(0);
 		glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 		NativeRenderer_EndUtilityPass(&clearState);

@@ -72,6 +72,9 @@ internal int NativeRenderer_InitialiseGLContext(char *windowName, int fullscreen
 #ifdef __EMSCRIPTEN__
 	int minor_version = 0;
 	int profile = SDL_GL_CONTEXT_PROFILE_ES;
+#elif CTR_NATIVE_GLES
+	int minor_version = 2;
+	int profile = SDL_GL_CONTEXT_PROFILE_ES;
 #else
 	int minor_version = 3;
 	int profile = SDL_GL_CONTEXT_PROFILE_CORE;
@@ -104,7 +107,7 @@ internal int NativeRenderer_InitialiseGLContext(char *windowName, int fullscreen
 
 internal int NativeRenderer_InitialiseGLExt(void)
 {
-#if !defined(__vita__) && !defined(__EMSCRIPTEN__)
+#if !defined(__vita__) && !CTR_NATIVE_GLES
 	GLenum err = gladLoadGL();
 
 	if (err == 0)

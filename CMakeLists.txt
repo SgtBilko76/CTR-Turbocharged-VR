@@ -36,6 +36,12 @@ if(CTR_NATIVE_64BIT)
     add_compile_definitions(CTR_NATIVE_64BIT)
 endif()
 
+# Desktop test of the GLES 3.2 renderer the Android/Quest build uses.
+option(CTR_NATIVE_GLES "Render through OpenGL ES 3.2 (as on Android/Quest) on a desktop build" OFF)
+if(ANDROID)
+    set(CTR_NATIVE_GLES ON CACHE BOOL "" FORCE)
+endif()
+
 set(CTR_NATIVE_MSVC_FRONTEND OFF)
 if(CMAKE_C_COMPILER_ID STREQUAL "MSVC" OR CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
     set(CTR_NATIVE_MSVC_FRONTEND ON)
@@ -133,8 +139,17 @@ function(ctr_native_add_label_warning_if_supported target warning flag_check)
 endfunction()
 
 # SDL3
-set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-set(SDL_STATIC ON CACHE BOOL "" FORCE)
+if(ANDROID)
+    # Gradle's debug variant would build -O0; the game needs the optimiser.
+    set(CMAKE_C_FLAGS_DEBUG "-O2 -g" CACHE STRING "" FORCE)
+    set(CMAKE_CXX_FLAGS_DEBUG "-O2 -g" CACHE STRING "" FORCE)
+    # SDLActivity loads libSDL3.so itself (its JNI entry points must stay in).
+    set(SDL_SHARED ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+else()
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+endif()
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 set(SDL_TESTS OFF CACHE BOOL "" FORCE)
 set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -145,11 +160,15 @@ set(SDL_CAMERA OFF CACHE BOOL "" FORCE)
 set(SDL_SENSOR OFF CACHE BOOL "" FORCE)
 # The first-run disc setup opens a native file picker (XDG portal or Zenity on
 # Linux), so SDL must be built with dialog support.
-set(SDL_DIALOG ON CACHE BOOL "" FORCE)
+if(ANDROID)
+    set(SDL_DIALOG OFF CACHE BOOL "" FORCE)
+else()
+    set(SDL_DIALOG ON CACHE BOOL "" FORCE)
+endif()
 set(SDL_TRAY OFF CACHE BOOL "" FORCE)
 set(SDL_POWER OFF CACHE BOOL "" FORCE)
 set(SDL_VULKAN OFF CACHE BOOL "" FORCE)
-if(EMSCRIPTEN)
+if(EMSCRIPTEN OR CTR_NATIVE_GLES)
     set(SDL_OPENGLES ON CACHE BOOL "" FORCE)
 else()
     set(SDL_OPENGLES OFF CACHE BOOL "" FORCE)
@@ -162,7 +181,24 @@ set(SDL_X11_XTEST OFF CACHE BOOL "" FORCE)
 add_subdirectory(externals/SDL)
 
 # CTR Native
-add_executable(ctr_native main.c)
+if(ANDROID)
+    # Meta Quest: SDLActivity loads libmain.so; platform/quest shows the frame
+    # in an OpenXR session (see include/platform/ctr_quest_hooks.h).
+    add_library(ctr_native SHARED main.c platform/quest/ctr_quest.c)
+    set_target_properties(ctr_native PROPERTIES OUTPUT_NAME main)
+    set_source_files_properties(main.c PROPERTIES COMPILE_OPTIONS
+        "-include;${CMAKE_SOURCE_DIR}/include/platform/ctr_quest_hooks.h")
+    set(CTR_QUEST_OPENXR_DIR "${CMAKE_SOURCE_DIR}/android/third_party/openxr")
+    add_library(ctr_openxr_loader SHARED IMPORTED)
+    set_target_properties(ctr_openxr_loader PROPERTIES
+        IMPORTED_LOCATION "${CTR_QUEST_OPENXR_DIR}/lib/${ANDROID_ABI}/libopenxr_loader.so")
+    target_include_directories(ctr_native PRIVATE "${CTR_QUEST_OPENXR_DIR}/include")
+    target_link_libraries(ctr_native ctr_openxr_loader GLESv3 EGL android log)
+    # The NDK makes -Wformat-security an error; the game passes its own format tables.
+    target_compile_options(ctr_native PRIVATE -Wno-error=format-security -Wno-format-security)
+else()
+    add_executable(ctr_native main.c)
+endif()
 if(WIN32)
     target_sources(ctr_native PRIVATE platform/windows/ctr_native.rc)
     # Application manifest (Common-Controls 6, so SDL message boxes fit their buttons).
@@ -189,8 +225,21 @@ target_compile_definitions(ctr_native PRIVATE
     CTR_NATIVE_UPDATE_CHANNEL=\"${CTR_NATIVE_UPDATE_CHANNEL}\"
     CTR_PRODUCT_NAME=\"${CTR_PRODUCT_NAME}\"
 )
-if(NOT EMSCRIPTEN)
+if(NOT EMSCRIPTEN AND NOT CTR_NATIVE_GLES)
     target_compile_definitions(ctr_native PRIVATE CTR_INTERNAL)
+endif()
+if(CTR_NATIVE_GLES AND NOT ANDROID)
+    target_compile_definitions(ctr_native PRIVATE CTR_NATIVE_FORCE_GLES)
+    target_link_libraries(ctr_native GLESv2)
+endif()
+# Desktop check of the Quest window hooks: the game renders into the offscreen
+# screen framebuffer exactly as on the headset (platform/quest).
+option(CTR_QUEST_DESKTOP_TEST "Render through the Quest screen-framebuffer hooks on the desktop (needs CTR_NATIVE_GLES)" OFF)
+if(CTR_QUEST_DESKTOP_TEST AND CTR_NATIVE_GLES AND NOT ANDROID)
+    target_sources(ctr_native PRIVATE platform/quest/ctr_quest_desktop_test.c)
+    target_compile_definitions(ctr_native PRIVATE CTR_QUEST_DESKTOP_TEST)
+    set_source_files_properties(main.c PROPERTIES COMPILE_OPTIONS
+        "-include;${CMAKE_SOURCE_DIR}/include/platform/ctr_quest_hooks.h")
 endif()
 if(CTR_NATIVE_MSVC_FRONTEND)
     target_compile_options(ctr_native PRIVATE

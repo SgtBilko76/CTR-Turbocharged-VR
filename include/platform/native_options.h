@@ -70,7 +70,7 @@ extern int gNativeMaxLodEnabled;
 // platform/native_update.h), then 0 or 1. The check itself, and its menu row,
 // exist on Windows and Linux only.
 extern int gNativeUpdateCheck;
-#if (defined(_WIN32) || defined(__linux__)) && !defined(__EMSCRIPTEN__) && !defined(__vita__)
+#if (defined(_WIN32) || defined(__linux__)) && !defined(__EMSCRIPTEN__) && !defined(__vita__) && !defined(__ANDROID__)
 #define NATIVE_UPDATE_CHECK_SUPPORTED 1
 #else
 #define NATIVE_UPDATE_CHECK_SUPPORTED 0

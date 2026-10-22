@@ -10,6 +10,8 @@
 #if defined(__EMSCRIPTEN__)
 #include <GLES3/gl3.h>
 #include <emscripten.h>
+#elif CTR_NATIVE_GLES
+#include <GLES3/gl32.h>
 #else
 #include "platform/native_glad.h"
 #endif

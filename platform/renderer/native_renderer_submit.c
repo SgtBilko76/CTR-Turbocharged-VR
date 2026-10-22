@@ -183,7 +183,17 @@ void NativeRenderer_DrawStaticObjectTriangles(const s32 *firstVertex, const s32 
 	NativePerf_BeginScope(NATIVE_PERF_BUCKET_RENDERER_DRAW_TRIANGLES);
 	glBindVertexArray(s_glStaticVertexArray);
 	NativeRenderer_SetCullMode(cullMode);
+#if CTR_NATIVE_GLES
+	for (int i = 0; i < draws; i++)
+	{
+		if (vertexCount[i] > 0)
+		{
+			glDrawArrays(GL_TRIANGLES, firstVertex[i], vertexCount[i]);
+		}
+	}
+#else
 	glMultiDrawArrays(GL_TRIANGLES, (const GLint *)firstVertex, (const GLsizei *)vertexCount, draws);
+#endif
 	NativeRenderer_RestoreVertexArray();
 	NativePerf_EndScope(NATIVE_PERF_BUCKET_RENDERER_DRAW_TRIANGLES);
 }
@@ -199,7 +209,7 @@ void NativeRenderer_DrawObjectTriangles(int startVertex, int triangles, u32 cull
 
 void NativeRenderer_PushDebugLabel(const char *label)
 {
-#if !defined(__vita__) && !defined(__EMSCRIPTEN__)
+#if !defined(__vita__) && !CTR_NATIVE_GLES
 	if (!GLAD_GL_KHR_debug)
 	{
 		return;
@@ -210,7 +220,7 @@ void NativeRenderer_PushDebugLabel(const char *label)
 
 void NativeRenderer_PopDebugLabel(void)
 {
-#if !defined(__vita__) && !defined(__EMSCRIPTEN__)
+#if !defined(__vita__) && !CTR_NATIVE_GLES
 	if (!GLAD_GL_KHR_debug)
 	{
 		return;

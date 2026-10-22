@@ -105,7 +105,7 @@ int gNativeRelicRaceResultTier = -1;
 #include "platform/native_projection.c"
 #include "platform/native_physics.c"
 #include "platform/native_collision.c"
-#if !defined(__EMSCRIPTEN__)
+#if !CTR_NATIVE_GLES
 #include "platform/native_glad.c"
 #endif
 #include "platform/native_input.c"

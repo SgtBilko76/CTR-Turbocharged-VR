@@ -50,6 +50,14 @@ typedef double f64;
 #define MINUTE                     (SECOND * 60)
 #define HOUR                       (MINUTE * 60)
 
+// GLES 3 renderer: WebGL 2, Android/Quest, and the desktop GLES test build
+// (CMake CTR_NATIVE_GLES, defines CTR_NATIVE_FORCE_GLES).
+#if defined(__EMSCRIPTEN__) || defined(__ANDROID__) || defined(CTR_NATIVE_FORCE_GLES)
+#define CTR_NATIVE_GLES 1
+#else
+#define CTR_NATIVE_GLES 0
+#endif
+
 #if defined(CTR_NATIVE) && defined(__vita__)
 #define CTR_NATIVE_HAS_ADHOC       1
 #define CTR_NATIVE_HAS_LEADERBOARD 1
