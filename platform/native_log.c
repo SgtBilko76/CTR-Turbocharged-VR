@@ -87,6 +87,16 @@ void Platform_LogInit(const char *appName)
 			s_logPath[0] = '\0';
 			return;
 		}
+#if defined(__ANDROID__)
+		// Android's shared storage (/sdcard) rejects ':' in file names.
+		for (char *c = s_logPath; *c != '\0'; c++)
+		{
+			if (*c == ':')
+			{
+				*c = '-';
+			}
+		}
+#endif
 	}
 
 	s_logStream = fopen(s_logPath, "wb");

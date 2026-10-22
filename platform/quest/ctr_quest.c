@@ -74,9 +74,11 @@ static struct
 	float screenWidth;      /* screen_width: metres */
 	float screenDistance;   /* screen_distance: metres from the head */
 	float screenHeight;     /* screen_height: metres above eye level */
-	float refreshRate;      /* refresh_rate: Hz (72, 80, 90, 120) */
+	float refreshRate;      /* refresh_rate: Hz (72, 80, 90, 120); the highest available <= this */
 	int flipY;              /* flip_y: 1 = flip the picture vertically */
-} s_cfg = {1920, 1080, 3.0f, 2.4f, 0.0f, 72.0f, 0};
+} s_cfg = {1920, 1080, 3.0f, 2.4f, 0.0f, 120.0f, 0};
+/* 120 Hz by default: the game presents at 60 FPS, so every frame is shown
+ * exactly twice (72 Hz would repeat every fifth frame and judder). */
 
 static void CtrQuest_LoadConfig(void)
 {
@@ -128,6 +130,7 @@ static void *CtrQuest_LogThread(void *unused)
 		ssize_t got = read(s_logPipe[0], buffer + used, sizeof(buffer) - 1 - used);
 		if (got <= 0)
 		{
+			LOGW("stdout pipe closed (%zd, errno %d)", got, errno);
 			break;
 		}
 		used += (size_t)got;
@@ -170,6 +173,9 @@ static void CtrQuest_RedirectStdio(void)
 	dup2(s_logPipe[1], STDERR_FILENO);
 	pthread_create(&thread, NULL, CtrQuest_LogThread, NULL);
 	pthread_detach(thread);
+	fprintf(stderr, "[CTRQuest] stderr redirected\n");
+	printf("[CTRQuest] stdout redirected\n");
+	fflush(stdout);
 }
 
 /* A native crash in a big process makes Android's crash_dump hang for
@@ -592,12 +598,17 @@ static int CtrQuest_HasGlExtension(const char *name)
 static int CtrQuest_CreateSwapchain(void)
 {
 	XrSwapchainCreateInfo info = {XR_TYPE_SWAPCHAIN_CREATE_INFO};
-	int64_t formats[64];
 	uint32_t formatCount = 0;
 	int64_t chosen = GL_RGBA8;
 	GLint oldFramebuffer = 0;
 
-	XR_CHECK(xrEnumerateSwapchainFormats(s_session, 64, &formatCount, formats));
+	XR_CHECK(xrEnumerateSwapchainFormats(s_session, 0, &formatCount, NULL));
+	if (formatCount > 256)
+	{
+		formatCount = 256;
+	}
+	int64_t *formats = (int64_t *)calloc(formatCount ? formatCount : 1, sizeof(*formats));
+	XR_CHECK(xrEnumerateSwapchainFormats(s_session, formatCount, &formatCount, formats));
 	for (uint32_t i = 0; i < formatCount; i++)
 	{
 		if (formats[i] == GL_SRGB8_ALPHA8)
@@ -606,6 +617,7 @@ static int CtrQuest_CreateSwapchain(void)
 			s_swapchainSrgb = 1;
 		}
 	}
+	free(formats);
 	/* The game's pixels are already gamma-encoded. With an sRGB swapchain the
 	 * compositor decodes them once, so they must be written unchanged: turn
 	 * off sRGB encoding on write, or decode in the copy shader if we can't. */
@@ -986,6 +998,99 @@ static void CtrQuest_ApplyHaptics(void)
 	}
 }
 
+/* Dev/test input without wearing the headset: /sdcard/CTR/vrcmd holds lines
+ * "BUTTON MS" (a b x y l1 r1 l2 r2 start select up down left right steerleft
+ * steerright); each is held for MS milliseconds, one after another. The file
+ * is deleted once read. */
+enum
+{
+	FAKE_A, FAKE_B, FAKE_X, FAKE_Y, FAKE_L1, FAKE_R1, FAKE_L2, FAKE_R2, FAKE_START, FAKE_SELECT,
+	FAKE_UP, FAKE_DOWN, FAKE_LEFT, FAKE_RIGHT, FAKE_STEER_LEFT, FAKE_STEER_RIGHT, FAKE_COUNT
+};
+static const char *const s_fakeNames[FAKE_COUNT] = {"a", "b", "x", "y", "l1", "r1", "l2", "r2", "start", "select",
+                                                    "up", "down", "left", "right", "steerleft", "steerright"};
+static struct
+{
+	int button;
+	int ms;
+} s_fakeQueue[64];
+static int s_fakeCount;
+static int s_fakeHead;
+static double s_fakeUntil;
+static int s_fakeActive = -1;
+static int s_fake[FAKE_COUNT];
+
+static void CtrQuest_PollCommandFile(void)
+{
+	static double nextPoll;
+	double now = CtrQuest_Now();
+	FILE *file;
+	char name[32];
+	int ms;
+
+	for (int i = 0; i < FAKE_COUNT; i++)
+	{
+		s_fake[i] = 0;
+	}
+	if (s_fakeActive >= 0 && now < s_fakeUntil)
+	{
+		s_fake[s_fakeActive] = 1;
+		return;
+	}
+	if (s_fakeActive >= 0)
+	{
+		/* 150 ms release gap so repeated presses register as separate presses. */
+		s_fakeActive = -1;
+		s_fakeUntil = now + 0.15;
+		return;
+	}
+	if (now < s_fakeUntil)
+	{
+		return;
+	}
+	if (s_fakeHead < s_fakeCount)
+	{
+		s_fakeActive = s_fakeQueue[s_fakeHead].button;
+		s_fakeUntil = now + s_fakeQueue[s_fakeHead].ms / 1000.0;
+		s_fakeHead++;
+		LOGI("vrcmd: %s", s_fakeActive >= 0 ? s_fakeNames[s_fakeActive] : "wait");
+		if (s_fakeActive >= 0)
+		{
+			s_fake[s_fakeActive] = 1;
+		}
+		return;
+	}
+	if (now < nextPoll)
+	{
+		return;
+	}
+	nextPoll = now + 0.5;
+	file = fopen(CTRQ_DATA_DIR "/vrcmd", "r");
+	if (file == NULL)
+	{
+		return;
+	}
+	s_fakeCount = 0;
+	s_fakeHead = 0;
+	while (s_fakeCount < 64 && fscanf(file, "%31s %d", name, &ms) == 2)
+	{
+		int button = -1; /* "wait MS" */
+		for (int i = 0; i < FAKE_COUNT; i++)
+		{
+			if (strcmp(name, s_fakeNames[i]) == 0)
+			{
+				button = i;
+			}
+		}
+		s_fakeQueue[s_fakeCount].button = button;
+		s_fakeQueue[s_fakeCount].ms = ms;
+		s_fakeCount++;
+	}
+	fclose(file);
+	unlink(CTRQ_DATA_DIR "/vrcmd");
+	LOGI("vrcmd: %d steps queued", s_fakeCount);
+}
+
 static void CtrQuest_UpdateInput(void)
 {
 	static int dpad[4];
@@ -1035,6 +1140,9 @@ static void CtrQuest_UpdateInput(void)
 	{
 		return;
 	}
+	CtrQuest_PollCommandFile();
+	if (s_fake[FAKE_STEER_LEFT]) left.x = -1.0f;
+	if (s_fake[FAKE_STEER_RIGHT]) left.x = 1.0f;
 
 	/* Right stick -> D-pad, with hysteresis. */
 	{
@@ -1052,21 +1160,21 @@ static void CtrQuest_UpdateInput(void)
 	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_LEFTY, CtrQuest_AxisValue(-left.y));
 	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHTX, 0);
 	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHTY, 0);
-	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, CtrQuest_AxisValue(focused ? CtrQuest_GetFloat(s_triggerAction, HAND_LEFT) : 0.0f));
-	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, CtrQuest_AxisValue(focused ? CtrQuest_GetFloat(s_triggerAction, HAND_RIGHT) : 0.0f));
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_SOUTH, focused && CtrQuest_GetBool(s_aAction, -1));
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_EAST, focused && CtrQuest_GetBool(s_bAction, -1));
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_WEST, focused && CtrQuest_GetBool(s_xAction, -1));
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_NORTH, focused && CtrQuest_GetBool(s_yAction, -1));
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, focused && CtrQuest_GetFloat(s_gripAction, HAND_LEFT) > 0.5f);
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, focused && CtrQuest_GetFloat(s_gripAction, HAND_RIGHT) > 0.5f);
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_START, focused && CtrQuest_GetBool(s_menuAction, -1));
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_BACK, leftClick && !rightClick);
+	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, CtrQuest_AxisValue(s_fake[FAKE_L2] ? 1.0f : (focused ? CtrQuest_GetFloat(s_triggerAction, HAND_LEFT) : 0.0f)));
+	SDL_SetJoystickVirtualAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, CtrQuest_AxisValue(s_fake[FAKE_R2] ? 1.0f : (focused ? CtrQuest_GetFloat(s_triggerAction, HAND_RIGHT) : 0.0f)));
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_SOUTH, s_fake[FAKE_A] || (focused && CtrQuest_GetBool(s_aAction, -1)));
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_EAST, s_fake[FAKE_B] || (focused && CtrQuest_GetBool(s_bAction, -1)));
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_WEST, s_fake[FAKE_X] || (focused && CtrQuest_GetBool(s_xAction, -1)));
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_NORTH, s_fake[FAKE_Y] || (focused && CtrQuest_GetBool(s_yAction, -1)));
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, s_fake[FAKE_L1] || focused && CtrQuest_GetFloat(s_gripAction, HAND_LEFT) > 0.5f);
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, s_fake[FAKE_R1] || focused && CtrQuest_GetFloat(s_gripAction, HAND_RIGHT) > 0.5f);
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_START, s_fake[FAKE_START] || (focused && CtrQuest_GetBool(s_menuAction, -1)));
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_BACK, s_fake[FAKE_SELECT] || (leftClick && !rightClick));
 	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_RIGHT_STICK, rightClick && !leftClick);
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_DPAD_UP, focused && dpad[0]);
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_DPAD_DOWN, focused && dpad[1]);
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_DPAD_LEFT, focused && dpad[2]);
-	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, focused && dpad[3]);
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_DPAD_UP, s_fake[FAKE_UP] || (focused && dpad[0]));
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_DPAD_DOWN, s_fake[FAKE_DOWN] || (focused && dpad[1]));
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_DPAD_LEFT, s_fake[FAKE_LEFT] || (focused && dpad[2]));
+	CtrQuest_SetButton(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, s_fake[FAKE_RIGHT] || (focused && dpad[3]));
 	SDL_UnlockJoysticks();
 
 	if (focused)

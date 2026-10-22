@@ -82,6 +82,12 @@ public class CTRActivity extends SDLActivity {
         return new String[] { "SDL3", "main" };
     }
 
+    /** main.c defines SDL_MAIN_HANDLED, so its entry point keeps the name main. */
+    @Override
+    protected String getMainFunction() {
+        return "main";
+    }
+
     @Override
     protected void onDestroy() {
         // SDL joins its native thread without a timeout; make sure the
