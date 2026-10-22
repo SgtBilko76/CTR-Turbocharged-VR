@@ -772,6 +772,20 @@ int GAMEPAD_ProcessTapRelease(struct GamepadSystem *gGamepads)
 		}
 		else
 		{
+#if defined(__ANDROID__)
+			// Quest: the Touch B button is Circle, which CTR's menus treat as
+			// confirm. While a menu is open it acts as Triangle (back) instead;
+			// while driving it stays Circle (weapon).
+			{
+				struct GameTracker *menuGGT = P32_GET(struct GameTracker *, sdata->gGT);
+				int inMenu = (P32_GET(struct RectMenu *, sdata->ptrActiveMenu) != NULL) ||
+				             ((menuGGT != NULL) && ((menuGGT->gameMode1 & MAIN_MENU) != 0));
+				if (inMenu && ((pad->buttonsHeldCurrFrame & BTN_CIRCLE) != 0))
+				{
+					pad->buttonsHeldCurrFrame = (pad->buttonsHeldCurrFrame & ~BTN_CIRCLE) | BTN_TRIANGLE;
+				}
+			}
+#endif
 			if (analogButtonsEnabled != 0)
 			{
 				if (pad->stickLX < 0x20)

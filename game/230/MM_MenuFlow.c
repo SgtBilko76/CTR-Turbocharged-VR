@@ -2189,6 +2189,11 @@ static void MM_NativeControlsMenuProc(struct RectMenu *menu)
 		menu->rowSelected = 1;
 	}
 	gNativeControlsSelectedAction = menu->rowSelected - 1;
+#if defined(__ANDROID__)
+	// Quest: no keyboard, so a keyboard capture could never finish. Only the
+	// controller column is usable.
+	gNativeControlsSelectedColumn = 1;
+#endif
 
 	if (gNativeControlsCaptureActive)
 	{
@@ -2248,7 +2253,7 @@ static void MM_NativeControlsMenuProc(struct RectMenu *menu)
 		return;
 	}
 
-#ifndef __vita__
+#if !defined(__vita__) && !defined(__ANDROID__)
 	if ((tap & BTN_LEFT) != 0)
 	{
 		if (gNativeControlsSelectedColumn != 0)
