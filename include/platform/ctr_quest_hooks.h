@@ -16,6 +16,8 @@
 
 #if defined(__ANDROID__) || defined(CTR_QUEST_DESKTOP_TEST)
 
+#include "platform/native_vr.h"
+
 #define glBindFramebuffer         CtrQuest_BindFramebuffer
 #define SDL_GetWindowSizeInPixels CtrQuest_GetWindowSizeInPixels
 #define SDL_GetWindowSize         CtrQuest_GetWindowSizeInPixels

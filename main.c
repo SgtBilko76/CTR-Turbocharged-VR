@@ -145,6 +145,7 @@ int gNativeRelicRaceResultTier = -1;
 #include "platform/renderer/native_renderer_passes.c"
 #include "platform/renderer/native_renderer_overlays.c"
 #include "platform/renderer/native_renderer_device.c"
+#include "platform/renderer/native_renderer_vr.c" // Quest stereo (CTR_QUEST_VR)
 #include "platform/native_font.c"
 #include "platform/native_title_logo.c"
 #include "platform/native_kart_color.c"

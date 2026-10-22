@@ -56,6 +56,8 @@
 
 #include <SDL3/SDL.h>
 
+#include "platform/native_vr.h"
+
 #define LOG_TAG "CTRQuest"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
@@ -83,7 +85,15 @@ static struct
 	int flipY;              /* flip_y: 1 = flip the picture vertically */
 	float steerDeadzone;    /* steer_deadzone: stick travel (0..1) ignored around centre */
 	float steerFull;        /* steer_full: stick travel (0..1) that gives full steering */
-} s_cfg = {1920, 1080, 3.0f, 2.4f, 0.0f, 120.0f, 0, 0.08f, 0.80f};
+	int stereo;             /* stereo: 1 = races in 3D around you, 0 = always the flat screen */
+	float worldScale;       /* world_scale: game units per metre */
+	float cullFov;          /* cull_fov: degrees the game culls with in 3D (head-turn room) */
+	int levelHorizon;       /* level_horizon: 1 = keep the horizon level (drop camera pitch/roll) */
+	float eyeScale;         /* eye_scale: eye resolution x the headset's recommended size */
+	float hudDistance;      /* hud_distance: metres to the race HUD panel */
+	float hudWidth;         /* hud_width: metres */
+	float hudHeight;        /* hud_height: metres above eye level */
+} s_cfg = {1920, 1080, 3.0f, 2.4f, 0.0f, 120.0f, 0, 0.08f, 0.80f, 1, 64.0f, 120.0f, 1, 0.9f, 2.0f, 2.6f, -0.1f};
 /* 120 Hz by default: the game presents at 60 FPS, so every frame is shown
  * exactly twice (72 Hz would repeat every fifth frame and judder). */
 
@@ -114,12 +124,25 @@ static void CtrQuest_LoadConfig(void)
 		else if (strcmp(key, "flip_y") == 0) s_cfg.flipY = (int)value;
 		else if (strcmp(key, "steer_deadzone") == 0) s_cfg.steerDeadzone = value;
 		else if (strcmp(key, "steer_full") == 0) s_cfg.steerFull = value;
+		else if (strcmp(key, "stereo") == 0) s_cfg.stereo = (int)value;
+		else if (strcmp(key, "world_scale") == 0) s_cfg.worldScale = value;
+		else if (strcmp(key, "cull_fov") == 0) s_cfg.cullFov = value;
+		else if (strcmp(key, "level_horizon") == 0) s_cfg.levelHorizon = (int)value;
+		else if (strcmp(key, "eye_scale") == 0) s_cfg.eyeScale = value;
+		else if (strcmp(key, "hud_distance") == 0) s_cfg.hudDistance = value;
+		else if (strcmp(key, "hud_width") == 0) s_cfg.hudWidth = value;
+		else if (strcmp(key, "hud_height") == 0) s_cfg.hudHeight = value;
 	}
 	fclose(file);
 	if (s_cfg.screenPixelsW < 320 || s_cfg.screenPixelsW > 4096) s_cfg.screenPixelsW = 1920;
 	if (s_cfg.screenPixelsH < 240 || s_cfg.screenPixelsH > 4096) s_cfg.screenPixelsH = 1080;
 	if (s_cfg.steerDeadzone < 0.0f || s_cfg.steerDeadzone > 0.5f) s_cfg.steerDeadzone = 0.08f;
 	if (s_cfg.steerFull < s_cfg.steerDeadzone + 0.1f || s_cfg.steerFull > 1.0f) s_cfg.steerFull = 0.80f;
+	if (s_cfg.eyeScale < 0.4f || s_cfg.eyeScale > 1.5f) s_cfg.eyeScale = 0.9f;
+	if (s_cfg.hudDistance < 0.3f) s_cfg.hudDistance = 2.0f;
+	if (s_cfg.hudWidth < 0.2f) s_cfg.hudWidth = 2.6f;
+	LOGI("vr.cfg: stereo %d, world_scale %.1f, cull_fov %.0f, level_horizon %d, eye_scale %.2f, hud %.2f m at %.2f m", s_cfg.stereo,
+	     s_cfg.worldScale, s_cfg.cullFov, s_cfg.levelHorizon, s_cfg.eyeScale, s_cfg.hudWidth, s_cfg.hudDistance);
 	LOGI("vr.cfg: %dx%d px, %.2f m wide at %.2f m, %.0f Hz", s_cfg.screenPixelsW, s_cfg.screenPixelsH, s_cfg.screenWidth,
 	     s_cfg.screenDistance, s_cfg.refreshRate);
 }
@@ -271,6 +294,10 @@ __attribute__((constructor)) static void CtrQuest_OnLoad(void)
 	 * input in VR; only the virtual pad below may become a player. */
 	setenv("SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT", "0x1209/0xc7c1", 1);
 	CtrQuest_LoadConfig();
+	{
+		CtrVrConfig vr = {s_cfg.stereo, s_cfg.worldScale, s_cfg.cullFov, s_cfg.levelHorizon};
+		CtrVr_Configure(&vr);
+	}
 	if (access(CTRQ_DATA_DIR "/assets/ctr-u.bin", R_OK) != 0)
 	{
 		LOGE("missing " CTRQ_DATA_DIR "/assets/ctr-u.bin (errno %d): copy the NTSC-U disc image there", errno);
@@ -404,6 +431,25 @@ static GLuint s_copyProgram;
 static GLint s_copyDecodeLoc;
 static GLint s_copyFlipLoc;
 static GLuint s_copyVao;
+static GLuint s_hudProgram;
+static GLint s_hudDecodeLoc;
+
+/* Stereo: one swapchain per eye + the race HUD panel. */
+typedef struct CtrQuestChain
+{
+	XrSwapchain handle;
+	uint32_t count;
+	XrSwapchainImageOpenGLESKHR images[8];
+	GLuint fbos[8];
+	int width, height;
+} CtrQuestChain;
+static CtrQuestChain s_eyeChain[2];
+static CtrQuestChain s_hudChain;
+static int s_stereoReady;
+static XrView s_views[2];
+static int s_viewsValid;
+static XrFrameState s_frameState;
+static int s_frameBegun;
 
 static XrActionSet s_actionSet;
 static XrPath s_handPath[2];
@@ -606,6 +652,8 @@ static int CtrQuest_HasGlExtension(const char *name)
 	return 0;
 }
 
+static int64_t s_swapchainFormat = GL_RGBA8;
+
 static int CtrQuest_CreateSwapchain(void)
 {
 	XrSwapchainCreateInfo info = {XR_TYPE_SWAPCHAIN_CREATE_INFO};
@@ -629,6 +677,7 @@ static int CtrQuest_CreateSwapchain(void)
 		}
 	}
 	free(formats);
+	s_swapchainFormat = chosen;
 	/* The game's pixels are already gamma-encoded. With an sRGB swapchain the
 	 * compositor decodes them once, so they must be written unchanged: turn
 	 * off sRGB encoding on write, or decode in the copy shader if we can't. */
@@ -664,6 +713,77 @@ static int CtrQuest_CreateSwapchain(void)
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_swapchainImages[i].image, 0);
 	}
 	glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)oldFramebuffer);
+	return 1;
+}
+
+static int CtrQuest_CreateChain(CtrQuestChain *chain, int width, int height)
+{
+	XrSwapchainCreateInfo info = {XR_TYPE_SWAPCHAIN_CREATE_INFO};
+	GLint oldFramebuffer = 0;
+
+	info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+	info.format = s_swapchainFormat;
+	info.sampleCount = 1;
+	info.width = (uint32_t)width;
+	info.height = (uint32_t)height;
+	info.faceCount = 1;
+	info.arraySize = 1;
+	info.mipCount = 1;
+	XR_CHECK(xrCreateSwapchain(s_session, &info, &chain->handle));
+	XR_CHECK(xrEnumerateSwapchainImages(chain->handle, 0, &chain->count, NULL));
+	if (chain->count > 8)
+	{
+		chain->count = 8;
+	}
+	for (uint32_t i = 0; i < chain->count; i++)
+	{
+		chain->images[i].type = XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR;
+	}
+	XR_CHECK(xrEnumerateSwapchainImages(chain->handle, chain->count, &chain->count, (XrSwapchainImageBaseHeader *)chain->images));
+	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &oldFramebuffer);
+	glGenFramebuffers((GLsizei)chain->count, chain->fbos);
+	for (uint32_t i = 0; i < chain->count; i++)
+	{
+		glBindFramebuffer(GL_FRAMEBUFFER, chain->fbos[i]);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, chain->images[i].image, 0);
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)oldFramebuffer);
+	chain->width = width;
+	chain->height = height;
+	return 1;
+}
+
+/* Eye swapchains at the headset's recommended size x eye_scale, and the HUD
+ * panel at the game's screen size. */
+static int CtrQuest_CreateStereoChains(void)
+{
+	XrViewConfigurationView views[2] = {{XR_TYPE_VIEW_CONFIGURATION_VIEW}, {XR_TYPE_VIEW_CONFIGURATION_VIEW}};
+	uint32_t count = 0;
+	int width, height;
+
+	XR_CHECK(xrEnumerateViewConfigurationViews(s_instance, s_system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2, &count, views));
+	if (count != 2)
+	{
+		LOGE("expected 2 views, got %u", count);
+		return 0;
+	}
+	width = (int)((float)views[0].recommendedImageRectWidth * s_cfg.eyeScale + 0.5f) & ~1;
+	height = (int)((float)views[0].recommendedImageRectHeight * s_cfg.eyeScale + 0.5f) & ~1;
+	if (width > (int)views[0].maxImageRectWidth) width = (int)views[0].maxImageRectWidth;
+	if (height > (int)views[0].maxImageRectHeight) height = (int)views[0].maxImageRectHeight;
+	for (int eye = 0; eye < 2; eye++)
+	{
+		if (!CtrQuest_CreateChain(&s_eyeChain[eye], width, height))
+		{
+			return 0;
+		}
+	}
+	if (!CtrQuest_CreateChain(&s_hudChain, s_cfg.screenPixelsW, s_cfg.screenPixelsH))
+	{
+		return 0;
+	}
+	LOGI("stereo: eyes %dx%d (recommended %ux%u x %.2f), HUD panel %dx%d", width, height, views[0].recommendedImageRectWidth,
+	     views[0].recommendedImageRectHeight, s_cfg.eyeScale, s_cfg.screenPixelsW, s_cfg.screenPixelsH);
 	return 1;
 }
 
@@ -729,6 +849,45 @@ static int CtrQuest_InitCopyPass(void)
 	s_copyFlipLoc = glGetUniformLocation(s_copyProgram, "u_flip");
 	glUseProgram((GLuint)oldProgram);
 	glGenVertexArrays(1, &s_copyVao);
+
+	/* HUD: drawn over black and over white; alpha = 1 - (white - black),
+	 * the over-black colour is already premultiplied. */
+	{
+		static const char *hudFs = "#version 300 es\n"
+		                           "precision highp float;\n"
+		                           "uniform sampler2D u_black;\n"
+		                           "uniform sampler2D u_white;\n"
+		                           "uniform float u_decode;\n"
+		                           "in vec2 v_uv;\n"
+		                           "out vec4 o_color;\n"
+		                           "void main() {\n"
+		                           "  vec3 b = texture(u_black, v_uv).rgb;\n"
+		                           "  vec3 w = texture(u_white, v_uv).rgb;\n"
+		                           "  float a = clamp(1.0 - dot(w - b, vec3(1.0 / 3.0)), 0.0, 1.0);\n"
+		                           "  vec3 lin = mix(b / 12.92, pow((b + 0.055) / 1.055, vec3(2.4)), step(0.04045, b));\n"
+		                           "  o_color = vec4(mix(b, lin, u_decode), a);\n"
+		                           "}\n";
+		GLuint hv = CtrQuest_CompileShader(GL_VERTEX_SHADER, vs);
+		GLuint hf = CtrQuest_CompileShader(GL_FRAGMENT_SHADER, hudFs);
+		s_hudProgram = glCreateProgram();
+		glAttachShader(s_hudProgram, hv);
+		glAttachShader(s_hudProgram, hf);
+		glLinkProgram(s_hudProgram);
+		glGetProgramiv(s_hudProgram, GL_LINK_STATUS, &ok);
+		glDeleteShader(hv);
+		glDeleteShader(hf);
+		if (!ok)
+		{
+			LOGE("HUD program failed to link");
+			return 0;
+		}
+		glUseProgram(s_hudProgram);
+		glUniform1i(glGetUniformLocation(s_hudProgram, "u_black"), 0);
+		glUniform1i(glGetUniformLocation(s_hudProgram, "u_white"), 1);
+		glUniform1f(glGetUniformLocation(s_hudProgram, "u_flip"), 0.0f);
+		s_hudDecodeLoc = glGetUniformLocation(s_hudProgram, "u_decode");
+		glUseProgram((GLuint)oldProgram);
+	}
 	return 1;
 }
 
@@ -781,6 +940,7 @@ static int CtrQuest_InitXr(void)
 	{
 		return 0;
 	}
+	s_stereoReady = s_cfg.stereo && CtrQuest_CreateStereoChains();
 	if (s_srgbWriteControl)
 	{
 		/* Only our swapchain is sRGB; the game's targets are all UNORM. */
@@ -1314,19 +1474,22 @@ static void CtrQuest_UpdateAnchor(XrTime time)
 	LOGI("screen centred: head (%.2f %.2f %.2f) yaw %.1f deg", s_anchorPos.x, s_anchorPos.y, s_anchorPos.z, s_anchorYaw * 57.2958f);
 }
 
-/* Copy the game's screen into the swapchain image, keeping the GL state the
- * game's renderer caches. */
-static void CtrQuest_CopyScreen(uint32_t index)
+/* Draw a fullscreen pass into a swapchain image, keeping the GL state the
+ * game's renderer caches. tex1 (unit 1) is only used by the HUD program. */
+static void CtrQuest_DrawPass(GLuint fbo, int width, int height, GLuint program, GLuint tex0, GLuint tex1)
 {
-	GLint program, vao, activeTexture, texture, sampler, drawFbo, readFbo, viewport[4];
+	GLint oldProgram, vao, activeTexture, texture0, texture1, sampler0, sampler1, drawFbo, readFbo, viewport[4];
 	GLboolean scissor, blend, depth, stencil, cull, colorMask[4];
 
-	glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+	glGetIntegerv(GL_CURRENT_PROGRAM, &oldProgram);
 	glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
 	glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+	glActiveTexture(GL_TEXTURE1);
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture1);
+	glGetIntegerv(GL_SAMPLER_BINDING, &sampler1);
 	glActiveTexture(GL_TEXTURE0);
-	glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
-	glGetIntegerv(GL_SAMPLER_BINDING, &sampler);
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture0);
+	glGetIntegerv(GL_SAMPLER_BINDING, &sampler0);
 	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFbo);
 	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFbo);
 	glGetIntegerv(GL_VIEWPORT, viewport);
@@ -1337,27 +1500,42 @@ static void CtrQuest_CopyScreen(uint32_t index)
 	stencil = glIsEnabled(GL_STENCIL_TEST);
 	cull = glIsEnabled(GL_CULL_FACE);
 
-	glBindFramebuffer(GL_FRAMEBUFFER, s_swapchainFbos[index]);
-	glViewport(0, 0, s_cfg.screenPixelsW, s_cfg.screenPixelsH);
+	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+	glViewport(0, 0, width, height);
 	glDisable(GL_SCISSOR_TEST);
 	glDisable(GL_BLEND);
 	glDisable(GL_DEPTH_TEST);
 	glDisable(GL_STENCIL_TEST);
 	glDisable(GL_CULL_FACE);
 	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-	glUseProgram(s_copyProgram);
-	glUniform1f(s_copyDecodeLoc, (s_swapchainSrgb && !s_srgbWriteControl) ? 1.0f : 0.0f);
-	glUniform1f(s_copyFlipLoc, s_cfg.flipY ? 1.0f : 0.0f);
-	glBindTexture(GL_TEXTURE_2D, s_screenTexture);
+	glUseProgram(program);
+	if (program == s_copyProgram)
+	{
+		glUniform1f(s_copyDecodeLoc, (s_swapchainSrgb && !s_srgbWriteControl) ? 1.0f : 0.0f);
+		glUniform1f(s_copyFlipLoc, s_cfg.flipY ? 1.0f : 0.0f);
+	}
+	else
+	{
+		glUniform1f(s_hudDecodeLoc, (s_swapchainSrgb && !s_srgbWriteControl) ? 1.0f : 0.0f);
+	}
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, tex1);
+	glBindSampler(1, 0);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, tex0);
 	glBindSampler(0, 0);
 	glBindVertexArray(s_copyVao);
 	glDrawArrays(GL_TRIANGLES, 0, 3);
 
 	glBindVertexArray((GLuint)vao);
-	glBindSampler(0, (GLuint)sampler);
-	glBindTexture(GL_TEXTURE_2D, (GLuint)texture);
+	glActiveTexture(GL_TEXTURE1);
+	glBindSampler(1, (GLuint)sampler1);
+	glBindTexture(GL_TEXTURE_2D, (GLuint)texture1);
+	glActiveTexture(GL_TEXTURE0);
+	glBindSampler(0, (GLuint)sampler0);
+	glBindTexture(GL_TEXTURE_2D, (GLuint)texture0);
 	glActiveTexture((GLenum)activeTexture);
-	glUseProgram((GLuint)program);
+	glUseProgram((GLuint)oldProgram);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)drawFbo);
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)readFbo);
 	glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
@@ -1369,62 +1547,206 @@ static void CtrQuest_CopyScreen(uint32_t index)
 	if (cull) glEnable(GL_CULL_FACE);
 }
 
-static void CtrQuest_RunFrame(void)
+/* Acquire an image of a swapchain, draw one pass into it, release it. */
+static int CtrQuest_FillChain(XrSwapchain chain, const GLuint *fbos, int width, int height, GLuint program, GLuint tex0, GLuint tex1)
 {
-	XrFrameWaitInfo waitInfo = {XR_TYPE_FRAME_WAIT_INFO};
-	XrFrameState frameState = {XR_TYPE_FRAME_STATE};
-	XrFrameBeginInfo beginInfo = {XR_TYPE_FRAME_BEGIN_INFO};
+	XrSwapchainImageAcquireInfo acquire = {XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+	XrSwapchainImageWaitInfo wait = {XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+	XrSwapchainImageReleaseInfo release = {XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+	uint32_t index = 0;
+
+	wait.timeout = XR_INFINITE_DURATION;
+	if (XR_FAILED(xrAcquireSwapchainImage(chain, &acquire, &index)))
+	{
+		return 0;
+	}
+	if (XR_FAILED(xrWaitSwapchainImage(chain, &wait)))
+	{
+		xrReleaseSwapchainImage(chain, &release);
+		return 0;
+	}
+	CtrQuest_DrawPass(fbos[index], width, height, program, tex0, tex1);
+	xrReleaseSwapchainImage(chain, &release);
+	return 1;
+}
+
+/* Pose `distance` m in front of the anchor, `up` m above its eye height. */
+static XrPosef CtrQuest_AnchorPose(float distance, float up)
+{
+	XrPosef pose;
+	const float sinYaw = sinf(s_anchorYaw);
+	const float cosYaw = cosf(s_anchorYaw);
+
+	pose.orientation = CtrQuest_QuatYaw(s_anchorYaw);
+	/* forward of yaw = (-sin, 0, -cos) */
+	pose.position.x = s_anchorPos.x - sinYaw * distance;
+	pose.position.y = s_anchorPos.y + up;
+	pose.position.z = s_anchorPos.z - cosYaw * distance;
+	return pose;
+}
+
+static XrQuaternionf CtrQuest_QuatMul(XrQuaternionf a, XrQuaternionf b)
+{
+	XrQuaternionf q;
+	q.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z;
+	q.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
+	q.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
+	q.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
+	return q;
+}
+
+static XrVector3f CtrQuest_Rotate(XrQuaternionf q, XrVector3f v)
+{
+	/* v' = v + 2w (u x v) + 2 u x (u x v) */
+	const float ux = q.x, uy = q.y, uz = q.z;
+	const float cx = uy * v.z - uz * v.y, cy = uz * v.x - ux * v.z, cz = ux * v.y - uy * v.x;
+	const float dx = uy * cz - uz * cy, dy = uz * cx - ux * cz, dz = ux * cy - uy * cx;
+	XrVector3f r = {v.x + 2.0f * (q.w * cx + dx), v.y + 2.0f * (q.w * cy + dy), v.z + 2.0f * (q.w * cz + dz)};
+	return r;
+}
+
+/* Eye poses for the frame the game is about to draw, relative to the
+ * recentre anchor (its yaw removed). */
+static void CtrQuest_LocateEyes(void)
+{
+	XrViewLocateInfo locate = {XR_TYPE_VIEW_LOCATE_INFO};
+	XrViewState viewState = {XR_TYPE_VIEW_STATE};
+	const XrViewStateFlags needed = XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT;
+	CtrVrEyePose eyes[2];
+	uint32_t count = 0;
+
+	s_viewsValid = 0;
+	if (s_stereoReady && s_anchorValid && s_frameState.shouldRender)
+	{
+		locate.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+		locate.displayTime = s_frameState.predictedDisplayTime;
+		locate.space = s_localSpace;
+		s_views[0].type = s_views[1].type = XR_TYPE_VIEW;
+		s_views[0].next = s_views[1].next = NULL;
+		if (XR_SUCCEEDED(xrLocateViews(s_session, &locate, &viewState, 2, &count, s_views)) && count == 2 &&
+		    (viewState.viewStateFlags & needed) == needed)
+		{
+			const XrQuaternionf inverseAnchor = CtrQuest_QuatYaw(-s_anchorYaw);
+			for (int eye = 0; eye < 2; eye++)
+			{
+				const XrQuaternionf q = CtrQuest_QuatMul(inverseAnchor, s_views[eye].pose.orientation);
+				const XrVector3f offset = {s_views[eye].pose.position.x - s_anchorPos.x, s_views[eye].pose.position.y - s_anchorPos.y,
+				                           s_views[eye].pose.position.z - s_anchorPos.z};
+				const XrVector3f p = CtrQuest_Rotate(inverseAnchor, offset);
+				float *m = eyes[eye].rot;
+				m[0] = 1.0f - 2.0f * (q.y * q.y + q.z * q.z);
+				m[1] = 2.0f * (q.x * q.y - q.z * q.w);
+				m[2] = 2.0f * (q.x * q.z + q.y * q.w);
+				m[3] = 2.0f * (q.x * q.y + q.z * q.w);
+				m[4] = 1.0f - 2.0f * (q.x * q.x + q.z * q.z);
+				m[5] = 2.0f * (q.y * q.z - q.x * q.w);
+				m[6] = 2.0f * (q.x * q.z - q.y * q.w);
+				m[7] = 2.0f * (q.y * q.z + q.x * q.w);
+				m[8] = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
+				eyes[eye].pos[0] = p.x;
+				eyes[eye].pos[1] = p.y;
+				eyes[eye].pos[2] = p.z;
+				eyes[eye].tanLeft = tanf(s_views[eye].fov.angleLeft);
+				eyes[eye].tanRight = tanf(s_views[eye].fov.angleRight);
+				eyes[eye].tanUp = tanf(s_views[eye].fov.angleUp);
+				eyes[eye].tanDown = tanf(s_views[eye].fov.angleDown);
+			}
+			s_viewsValid = 1;
+		}
+	}
+	CtrVr_SetEyePoses(s_viewsValid ? eyes : NULL, s_eyeChain[0].width, s_eyeChain[0].height, s_viewsValid);
+}
+
+/* Submit the frame the game just finished drawing (begun at the last swap). */
+static void CtrQuest_EndFrame(int stereo)
+{
 	XrFrameEndInfo endInfo = {XR_TYPE_FRAME_END_INFO};
 	XrCompositionLayerQuad quad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
-	const XrCompositionLayerBaseHeader *layers[1];
+	XrCompositionLayerQuad hud = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+	XrCompositionLayerProjection projection = {XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+	XrCompositionLayerProjectionView views[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
+	const XrCompositionLayerBaseHeader *layers[2];
 	uint32_t layerCount = 0;
 	static int frameCount;
+	static int lastStereo = -1;
 
-	CtrQuest_HandleEvents();
-	if (!s_sessionRunning)
+	if (!s_frameBegun)
 	{
 		return;
 	}
-	if (XR_FAILED(xrWaitFrame(s_session, &waitInfo, &frameState)) || XR_FAILED(xrBeginFrame(s_session, &beginInfo)))
-	{
-		return;
-	}
-	CtrQuest_UpdateAnchor(frameState.predictedDisplayTime);
-	CtrQuest_UpdateInput();
+	s_frameBegun = 0;
 
-	if (frameState.shouldRender && s_anchorValid)
+	if (s_frameState.shouldRender && s_anchorValid)
 	{
-		XrSwapchainImageAcquireInfo acquire = {XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-		XrSwapchainImageWaitInfo wait = {XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-		XrSwapchainImageReleaseInfo release = {XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-		uint32_t index = 0;
-
-		wait.timeout = XR_INFINITE_DURATION;
-		if (XR_SUCCEEDED(xrAcquireSwapchainImage(s_swapchain, &acquire, &index)) &&
-		    XR_SUCCEEDED(xrWaitSwapchainImage(s_swapchain, &wait)))
+		if (stereo && s_viewsValid)
 		{
-			const float sinYaw = sinf(s_anchorYaw);
-			const float cosYaw = cosf(s_anchorYaw);
-			CtrQuest_CopyScreen(index);
-			xrReleaseSwapchainImage(s_swapchain, &release);
+			int ok = 1;
+			for (int eye = 0; eye < 2; eye++)
+			{
+				ok &= CtrQuest_FillChain(s_eyeChain[eye].handle, s_eyeChain[eye].fbos, s_eyeChain[eye].width, s_eyeChain[eye].height, s_copyProgram,
+				                         CtrVr_GetEyeTexture(eye), 0);
+				views[eye].pose = s_views[eye].pose;
+				views[eye].fov = s_views[eye].fov;
+				views[eye].subImage.swapchain = s_eyeChain[eye].handle;
+				views[eye].subImage.imageRect.extent.width = s_eyeChain[eye].width;
+				views[eye].subImage.imageRect.extent.height = s_eyeChain[eye].height;
+			}
+			if (ok)
+			{
+				int hudW = 0, hudH = 0;
+				projection.space = s_localSpace;
+				projection.viewCount = 2;
+				projection.views = views;
+				layers[layerCount++] = (const XrCompositionLayerBaseHeader *)&projection;
 
+				CtrVr_GetHudSize(&hudW, &hudH);
+				if (hudW > s_hudChain.width) hudW = s_hudChain.width;
+				if (hudH > s_hudChain.height) hudH = s_hudChain.height;
+				if (hudW > 0 && hudH > 0 &&
+				    CtrQuest_FillChain(s_hudChain.handle, s_hudChain.fbos, hudW, hudH, s_hudProgram, CtrVr_GetHudTexture(0), CtrVr_GetHudTexture(1)))
+				{
+					hud.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+					hud.space = s_localSpace;
+					hud.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+					hud.subImage.swapchain = s_hudChain.handle;
+					hud.subImage.imageRect.extent.width = hudW;
+					hud.subImage.imageRect.extent.height = hudH;
+					hud.pose = CtrQuest_AnchorPose(s_cfg.hudDistance, s_cfg.hudHeight);
+					hud.size.width = s_cfg.hudWidth;
+					hud.size.height = s_cfg.hudWidth * (float)hudH / (float)hudW;
+					layers[layerCount++] = (const XrCompositionLayerBaseHeader *)&hud;
+				}
+			}
+			else
+			{
+				stereo = 0;
+			}
+		}
+		else
+		{
+			stereo = 0;
+		}
+		if (!stereo &&
+		    CtrQuest_FillChain(s_swapchain, s_swapchainFbos, s_cfg.screenPixelsW, s_cfg.screenPixelsH, s_copyProgram, s_screenTexture, 0))
+		{
 			quad.space = s_localSpace;
 			quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
 			quad.subImage.swapchain = s_swapchain;
 			quad.subImage.imageRect.extent.width = s_cfg.screenPixelsW;
 			quad.subImage.imageRect.extent.height = s_cfg.screenPixelsH;
-			quad.pose.orientation = CtrQuest_QuatYaw(s_anchorYaw);
-			/* forward of yaw = (-sin, 0, -cos) */
-			quad.pose.position.x = s_anchorPos.x - sinYaw * s_cfg.screenDistance;
-			quad.pose.position.y = s_anchorPos.y + s_cfg.screenHeight;
-			quad.pose.position.z = s_anchorPos.z - cosYaw * s_cfg.screenDistance;
+			quad.pose = CtrQuest_AnchorPose(s_cfg.screenDistance, s_cfg.screenHeight);
 			quad.size.width = s_cfg.screenWidth;
 			quad.size.height = s_cfg.screenWidth * (float)s_cfg.screenPixelsH / (float)s_cfg.screenPixelsW;
 			layers[layerCount++] = (const XrCompositionLayerBaseHeader *)&quad;
 		}
+		if (stereo != lastStereo)
+		{
+			LOGI("view: %s", stereo ? "3D (stereo world + HUD panel)" : "flat screen");
+			lastStereo = stereo;
+		}
 	}
 
-	endInfo.displayTime = frameState.predictedDisplayTime;
+	endInfo.displayTime = s_frameState.predictedDisplayTime;
 	endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 	endInfo.layerCount = layerCount;
 	endInfo.layers = layers;
@@ -1436,8 +1758,36 @@ static void CtrQuest_RunFrame(void)
 	}
 }
 
+/* Start the next XR frame before the game draws it, so its eye poses are
+ * known while drawing. xrWaitFrame paces the game to the display. */
+static void CtrQuest_BeginFrame(void)
+{
+	XrFrameWaitInfo waitInfo = {XR_TYPE_FRAME_WAIT_INFO};
+	XrFrameBeginInfo beginInfo = {XR_TYPE_FRAME_BEGIN_INFO};
+
+	CtrQuest_HandleEvents();
+	if (!s_sessionRunning)
+	{
+		CtrVr_SetEyePoses(NULL, 0, 0, 0);
+		return;
+	}
+	s_frameState.type = XR_TYPE_FRAME_STATE;
+	s_frameState.next = NULL;
+	if (XR_FAILED(xrWaitFrame(s_session, &waitInfo, &s_frameState)) || XR_FAILED(xrBeginFrame(s_session, &beginInfo)))
+	{
+		CtrVr_SetEyePoses(NULL, 0, 0, 0);
+		return;
+	}
+	s_frameBegun = 1;
+	CtrQuest_UpdateAnchor(s_frameState.predictedDisplayTime);
+	CtrQuest_UpdateInput();
+	CtrQuest_LocateEyes();
+}
+
 bool CtrQuest_SwapWindow(SDL_Window *window)
 {
+	const int stereo = CtrVr_FinishFrame();
+
 	(void)window;
 	if (!s_xrTried)
 	{
@@ -1450,7 +1800,8 @@ bool CtrQuest_SwapWindow(SDL_Window *window)
 	}
 	if (s_xrOk)
 	{
-		CtrQuest_RunFrame();
+		CtrQuest_EndFrame(stereo);
+		CtrQuest_BeginFrame();
 	}
 	return true;
 }

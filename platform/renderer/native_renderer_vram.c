@@ -236,8 +236,15 @@ void NativeRenderer_ClearVRAM(int x, int y, int w, int h, u8 r, u8 g, u8 b)
 	NativeRenderer_MarkVRAMDirty(x, y, w, h);
 }
 
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+internal void CtrVr_RecordClear(u8 r, u8 g, u8 b);
+#endif
+
 void NativeRenderer_Clear(int x, int y, int w, int h, u8 r, u8 g, u8 b)
 {
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+	CtrVr_RecordClear(r, g, b);
+#endif
 	if ((w <= 0) || (h <= 0))
 	{
 		return;

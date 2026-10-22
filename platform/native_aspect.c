@@ -59,8 +59,21 @@ int NativeAspect_UsesExpandedVisibility(void)
 	                                   (gNativeProjectionMode == NATIVE_PROJECTION_EDGE && gNativeProjectionStrength > 0));
 }
 
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+internal int CtrVr_WideCullActive(void);
+internal double CtrVr_CullFocalScale(void);
+#endif
+
 double NativeAspect_GetFocalScale(void)
 {
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+	// Stereo: the eyes reproject camera-space geometry, so the game's own
+	// frustum only decides culling. Make it wide enough for head turns.
+	if (NativeAspect_IsActive() && CtrVr_WideCullActive())
+	{
+		return CtrVr_CullFocalScale();
+	}
+#endif
 	if (!NativeAspect_IsActive() || gNativeFovDegrees == 0 || gNativeFovDegrees < 45 || gNativeFovDegrees > 100)
 	{
 		return 1.0;

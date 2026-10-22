@@ -282,8 +282,20 @@ internal void NativeRenderer_EnsureRenderTarget(struct NativeRenderTarget *targe
 	NativeRenderer_InvalidateTextureBinding();
 }
 
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+internal int CtrVr_InPass(void);
+#endif
+
 internal void NativeRenderer_BindMainRenderTarget(void)
 {
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+	// Stereo pass: the eye/HUD target is swapped in; don't resize it.
+	if (CtrVr_InPass())
+	{
+		glBindFramebuffer(GL_FRAMEBUFFER, NativeRenderer_GetDrawFramebuffer(&s_mainRenderTarget));
+		return;
+	}
+#endif
 	int logicalWidth = NativeGpu_GetRenderDispEnv()->disp.w;
 	int logicalHeight = NativeGpu_GetRenderDispEnv()->disp.h;
 	if ((logicalWidth <= 0) || (logicalHeight <= 0))

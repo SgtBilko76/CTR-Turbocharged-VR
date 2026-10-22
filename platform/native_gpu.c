@@ -2126,8 +2126,20 @@ static int s_gpuIsolatedDepthActive;
 static float s_gpuIsolatedBounds[4];
 #endif
 
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+internal int CtrVr_SplitInPass(const GPUDrawSplit *split);
+internal int CtrVr_DrawBatch(void (*drawSplits)(void));
+#endif
+
 internal void NativeGpu_DrawSplitRangePass(const GPUDrawSplit *split, int semiTransPass, BlendMode blendMode, bool depthWrite, int startVertex, int numVerts)
 {
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+	// Stereo: each pass draws only its share (eyes: world, HUD: the rest).
+	if (!CtrVr_SplitInPass(split))
+	{
+		return;
+	}
+#endif
 	if (split->debugText)
 	{
 		NativeRenderer_PushDebugLabel(split->debugText);
@@ -3077,6 +3089,21 @@ internal void NativeGpu_DrawWorldDepthSplits(void)
 }
 #endif
 
+#ifndef __vita__
+internal void NativeGpu_DrawSplitsForFrame(void)
+{
+	if (NATIVE_DEPTH_BUFFER_ACTIVE())
+	{
+		NativeGpu_DrawWorldDepthSplits();
+	}
+	else
+		for (int i = 1; i <= s_gpuDrawSplitCount; i++)
+		{
+			DrawSplit(&s_gpuDrawSplits[i]);
+		}
+}
+#endif
+
 //
 // Draws all polygons after AggregatePTAG
 //
@@ -3139,15 +3166,11 @@ internal void NativeGpu_DrawPreparedFrame(GrVertex *vertices, GPUDrawSplit *spli
 		}
 	}
 #else
-	if (NATIVE_DEPTH_BUFFER_ACTIVE())
-	{
-		NativeGpu_DrawWorldDepthSplits();
-	}
-	else
-		for (int i = 1; i <= s_gpuDrawSplitCount; i++)
-		{
-			DrawSplit(&s_gpuDrawSplits[i]);
-		}
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+	CtrVr_DrawBatch(NativeGpu_DrawSplitsForFrame);
+#else
+	NativeGpu_DrawSplitsForFrame();
+#endif
 #endif
 
 

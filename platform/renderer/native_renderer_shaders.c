@@ -466,7 +466,32 @@ global_variable const char *gte_shader_text_sdf = "	uniform sampler2D s_texture;
 	"\tgl_Position.z = 1.0 - a_orderDepth * (2.0 / 65535.0);\n"     \
 	"\tv_ditherCoord = a_position.xy;\n"
 #else
-#define GTE_ORDER_DEPTH_ATTRIBUTE "\tuniform mat4 ObjectToCamera;\n\tuniform vec4 NativeView;\n"
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+// Quest stereo: NativeVrBlock (platform/renderer/native_renderer_vr.c). In an
+// eye pass, native vertices are rebuilt in game camera space (directly, or
+// from screen*w through NativeView) and projected through the eye pose and
+// field of view instead of the game camera.
+#define GTE_VR_UNIFORMS "\tlayout(std140) uniform NativeVrBlock { mat4 vrEyeFromCamera; vec4 vrProj; vec4 vrMono; vec4 vrParams; };\n"
+#define GTE_VR_OVERRIDE                                                                                                   \
+	"\tif (vrParams.x > 0.5) {\n"                                                                                     \
+	"\t\tvec3 vrCam = vec3(0.0); float vrBias = 0.0; bool vrOk = false;\n"                                         \
+	"\t\tif (a_extra.z > 1.5) {\n"                                                                                  \
+	"\t\t\tvrCam = (ObjectToCamera * vec4(a_position.xyz, 1.0)).xyz; vrBias = a_position.w; vrOk = true;\n"     \
+	"\t\t} else if (a_extra.z > 0.5 && a_position.w > 0.0 && abs(NativeView.x) > 0.0 && abs(NativeView.y) > 0.0) {\n" \
+	"\t\t\tvrCam = vec3((a_position.x - NativeView.z * a_position.w) / NativeView.x,\n"                            \
+	"\t\t\t             (a_position.y - NativeView.w * a_position.w) / NativeView.y, a_position.w);\n"            \
+	"\t\t\tvrBias = a_position.z - a_position.w; vrOk = true;\n"                                                  \
+	"\t\t}\n"                                                                                                        \
+	"\t\tif (vrOk) {\n"                                                                                              \
+	"\t\t\tvec3 e = (vrEyeFromCamera * vec4(vrCam, 1.0)).xyz;\n"                                                  \
+	"\t\t\tgl_Position = vec4(vrProj.x * e.x + vrProj.y * e.z, vrProj.z * e.y + vrProj.w * e.z, e.z + vrBias, e.z);\n" \
+	"\t\t}\n"                                                                                                        \
+	"\t}\n"
+#else
+#define GTE_VR_UNIFORMS ""
+#define GTE_VR_OVERRIDE ""
+#endif
+#define GTE_ORDER_DEPTH_ATTRIBUTE "\tuniform mat4 ObjectToCamera;\n\tuniform vec4 NativeView;\n" GTE_VR_UNIFORMS
 // NOTE: a_position.z is the PGXP view depth (0 = affine). Scaling the whole
 // clip position by it leaves the screen position unchanged after the divide
 // but makes the rasteriser interpolate texture coordinates in perspective.
@@ -498,7 +523,7 @@ global_variable const char *gte_shader_text_sdf = "	uniform sampler2D s_texture;
 	"\t\tv_ditherCoord = vec3(a_position.xy, 1.0) * gl_Position.w;\n"                 \
 	"\t}\n"                                                                           \
 	"\tv_colorPerspective = vec4(a_color.xyz * a_texcoord.z, a_color.w);\n"           \
-	"\tv_clipSpace = (a_extra.z > 1.5) ? 2.0 + a_extra.w : a_extra.z;\n"
+	"\tv_clipSpace = (a_extra.z > 1.5) ? 2.0 + a_extra.w : a_extra.z;\n" GTE_VR_OVERRIDE
 #endif
 
 #if NATIVE_PGXP_SUPPORTED
@@ -722,6 +747,15 @@ internal ShaderID NativeRenderer_Shader_Compile(const char *source, bool isPsxSh
 		NATIVE_RENDERER_ERROR("%s\n", "Failed to link Shader!");
 	}
 
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+	{
+		const GLuint vrBlock = glGetUniformBlockIndex(program, "NativeVrBlock");
+		if (vrBlock != GL_INVALID_INDEX)
+		{
+			glUniformBlockBinding(program, vrBlock, CTR_VR_UBO_BINDING);
+		}
+	}
+#endif
 	GLint textureSampler = 0;
 	GLint presentLutSampler = 2;
 	glUseProgram(program);

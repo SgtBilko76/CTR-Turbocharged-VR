@@ -231,6 +231,10 @@ void NativeRenderer_UpdateSwapIntervalState(int swapInterval)
 	SDL_GL_SetSwapInterval(swapInterval);
 }
 
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+internal void CtrVr_OnBeginScene(void);
+#endif
+
 void NativeRenderer_BeginScene(void)
 {
 #if defined(CTR_INTERNAL)
@@ -296,6 +300,9 @@ void NativeRenderer_BeginScene(void)
 		glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
 	}
+#if defined(CTR_QUEST_VR) && CTR_QUEST_VR
+	CtrVr_OnBeginScene();
+#endif
 	NativePerf_EndScope(NATIVE_PERF_BUCKET_RENDERER_BEGIN_SCENE);
 }
 

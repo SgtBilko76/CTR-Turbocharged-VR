@@ -22,6 +22,17 @@ Stage 1: the game plays on a large virtual screen in front of you.
 
 Saves, `config.ini` and the log file are kept in `/sdcard/CTR`.
 
+## 3D view
+
+Races (and every other 1-player 3D scene, like the Adventure hub) are drawn
+in stereo around you: you sit at the game's chase camera and can look around
+freely. The race HUD floats on a panel in front of you. Menus and
+split-screen modes use the flat virtual screen. Hold both stick clicks for
+1 second to recentre the view.
+
+The 3D view needs the game's native 3D renderer, so the game's renderer
+option is switched to native while `stereo=1`.
+
 ## Controls
 
 The Touch controllers act as a PlayStation pad; the game's own controller
@@ -58,6 +69,12 @@ Hold **both stick clicks for one second** to put the screen back in front of you
 | `screen_pixels_w` / `screen_pixels_h` | 1920 / 1080 | game resolution |
 | `steer_deadzone` | 0.08 | stick travel ignored around the centre |
 | `steer_full` | 0.80 | stick travel for full steering (lower = more sensitive) |
+| `stereo` | 1 | 1 = races and the Adventure hub in 3D around you, 0 = always the flat screen |
+| `world_scale` | 64 | game units per metre (lower = the world looks bigger) |
+| `cull_fov` | 120 | vertical degrees the game draws around the camera (room for head turns) |
+| `level_horizon` | 1 | 1 = keep the horizon level, 0 = follow the chase camera's pitch and roll |
+| `eye_scale` | 0.9 | eye resolution relative to the headset's recommended size |
+| `hud_distance` / `hud_width` / `hud_height` | 2.0 / 2.6 / -0.1 | race HUD panel in metres |
 
 ## Building
 
