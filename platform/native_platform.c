@@ -739,7 +739,7 @@ void Platform_PollHostEvents(void)
 		case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
 			Platform_UpdateCursorVisibility();
 			break;
-#ifndef __vita__
+#if !defined(__vita__) && !defined(__ANDROID__)
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
 			NativeAudio_SetBackgroundMuted(1);
 			break;

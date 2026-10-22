@@ -2154,7 +2154,7 @@ internal int NativeAudio_GetXAMaxSampleAtSourceFrameNoLock(u64 frameIndex);
 
 internal void NativeAudio_SelectDriverHint(void)
 {
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 	if (SDL_GetHint(SDL_HINT_AUDIO_DRIVER) == NULL)
 	{
 		// NOTE(aalhendi): Keep native Linux playback on the SDL3 drivers that

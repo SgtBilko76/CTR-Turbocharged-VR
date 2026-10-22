@@ -60,6 +60,9 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 #define CTRQ_DATA_DIR "/sdcard/CTR"
+
+/* platform/native_audio.c */
+void NativeAudio_SetBackgroundMuted(int muted);
 #define CTRQ_PAD_VENDOR  0x1209
 #define CTRQ_PAD_PRODUCT 0xC7C1
 
@@ -830,6 +833,8 @@ static void CtrQuest_HandleEvents(void)
 			const XrEventDataSessionStateChanged *changed = (const XrEventDataSessionStateChanged *)&event;
 			s_sessionState = changed->state;
 			LOGI("session state %d", (int)s_sessionState);
+			/* Silent while the app is hidden (Quest menu, headset off). */
+			NativeAudio_SetBackgroundMuted(s_sessionState != XR_SESSION_STATE_VISIBLE && s_sessionState != XR_SESSION_STATE_FOCUSED);
 			if (s_sessionState == XR_SESSION_STATE_READY)
 			{
 				XrSessionBeginInfo begin = {XR_TYPE_SESSION_BEGIN_INFO};
@@ -1091,6 +1096,44 @@ static void CtrQuest_PollCommandFile(void)
 	LOGI("vrcmd: %d steps queued", s_fakeCount);
 }
 
+/* Diagnostics: every 2 s while a stick or trigger is moved, log what OpenXR
+ * reports and what SDL reads back from the virtual pad. */
+static void CtrQuest_LogInputState(int focused, XrVector2f left, XrVector2f right)
+{
+	static double nextLog;
+	static int listedPads;
+	double now = CtrQuest_Now();
+	float lx = CtrQuest_GetFloat(s_stickXAction, HAND_LEFT);
+	float ly = CtrQuest_GetFloat(s_stickYAction, HAND_LEFT);
+	float lt = CtrQuest_GetFloat(s_triggerAction, HAND_LEFT);
+	float rt = CtrQuest_GetFloat(s_triggerAction, HAND_RIGHT);
+
+	if (!listedPads && now > 0.0)
+	{
+		int count = 0;
+		SDL_JoystickID *ids = SDL_GetGamepads(&count);
+		listedPads = 1;
+		for (int i = 0; i < count; i++)
+		{
+			LOGI("SDL gamepad %d: id %u '%s' %04x:%04x player %d", i, (unsigned)ids[i], SDL_GetGamepadNameForID(ids[i]),
+			     SDL_GetGamepadVendorForID(ids[i]), SDL_GetGamepadProductForID(ids[i]), SDL_GetGamepadPlayerIndexForID(ids[i]));
+		}
+		SDL_free(ids);
+	}
+	if (now < nextLog)
+	{
+		return;
+	}
+	if (fabsf(left.x) + fabsf(left.y) + fabsf(right.x) + fabsf(right.y) + fabsf(lx) + fabsf(ly) + lt + rt < 0.05f)
+	{
+		return;
+	}
+	nextLog = now + 2.0;
+	LOGI("input: focused=%d L(%.2f %.2f) Lxy(%.2f %.2f) R(%.2f %.2f) LT %.2f RT %.2f -> pad axes LX %d LY %d LT %d RT %d", focused, left.x,
+	     left.y, lx, ly, right.x, right.y, lt, rt, SDL_GetJoystickAxis(s_pad, SDL_GAMEPAD_AXIS_LEFTX), SDL_GetJoystickAxis(s_pad, SDL_GAMEPAD_AXIS_LEFTY),
+	     SDL_GetJoystickAxis(s_pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER), SDL_GetJoystickAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
+}
+
 static void CtrQuest_UpdateInput(void)
 {
 	static int dpad[4];
@@ -1141,8 +1184,10 @@ static void CtrQuest_UpdateInput(void)
 		return;
 	}
 	CtrQuest_PollCommandFile();
+	/* Test steering also holds accelerate (Cross), so the kart actually turns. */
 	if (s_fake[FAKE_STEER_LEFT]) left.x = -1.0f;
 	if (s_fake[FAKE_STEER_RIGHT]) left.x = 1.0f;
+	if (s_fake[FAKE_STEER_LEFT] || s_fake[FAKE_STEER_RIGHT]) s_fake[FAKE_A] = 1;
 
 	/* Right stick -> D-pad, with hysteresis. */
 	{
@@ -1180,6 +1225,7 @@ static void CtrQuest_UpdateInput(void)
 	if (focused)
 	{
 		CtrQuest_ApplyHaptics();
+		CtrQuest_LogInputState(focused, left, right);
 	}
 }
 
