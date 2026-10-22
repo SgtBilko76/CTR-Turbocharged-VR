@@ -1,4 +1,11 @@
 # Crash Team Racing: Turbocharged
+
+> **Meta Quest VR port:** this fork (`quest` branch) runs CTR: Turbocharged natively on
+> Meta Quest, with races in real 3D around you and head tracking. Download the APK from
+> [Releases](https://github.com/SgtBilko76/CTR-Turbocharged-VR/releases); install steps,
+> controls and settings are in [README-QUEST.md](README-QUEST.md). You need your own
+> NTSC-U disc image; no game data is included. More VR ports: [portroyale.online](https://portroyale.online).
+
 <img src="screenshots/game1.jpg"></img><br>
 Crash Team Racing: Turbocharged is a fork of [Crash Team Racing: High Octane](https://github.com/Rinnegatamante/Crash-Team-Racing-High-Octane), a sourceport for PSVita, PC (Windows) and Web Browser based on the [ctr-native](https://github.com/CTR-tools/ctr-native) project. Turbocharged extends High Octane with additional rendering, precision, and quality-of-life options.
 
