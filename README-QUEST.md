@@ -1,20 +1,20 @@
 # CTR: Turbocharged VR (Meta Quest)
 
-Crash Team Racing: Turbocharged running natively on Meta Quest 3 / 3S / Pro / 2,
-built from this repository's `quest` branch (the upstream 64-bit branch plus a
-GLES renderer path and an OpenXR layer).
-
-Stage 1: the game plays on a large virtual screen in front of you.
+Crash Team Racing: Turbocharged running natively on Meta Quest (tested on
+Quest 3), built from this repository's `quest` branch: the upstream 64-bit
+branch plus a GLES renderer path and an OpenXR layer. Races are in real 3D
+around you with head tracking; menus show on a large virtual screen.
 
 ## What you need
 
 - Your own **NTSC-U (US) Crash Team Racing** disc image as a raw `.bin`
   (SCUS-94426). Game data is not included.
-- The APK (`android/app/build/outputs/apk/debug/app-debug.apk` after a build).
+- The APK from the [Releases](https://github.com/SgtBilko76/CTR-Turbocharged-VR/releases)
+  page (or your own build, see below).
 
 ## Install
 
-1. Install the APK (SideQuest, or `adb install -r app-debug.apk`).
+1. Install the APK (SideQuest, or `adb install -r CTR-Turbocharged-VR-v0.1.0.apk`).
 2. Copy the disc image to the headset as `/sdcard/CTR/assets/ctr-u.bin`
    (in SideQuest: the folder icon, then `CTR/assets`).
 3. Start **CTR Turbocharged VR** from Library > Unknown Sources. On the first

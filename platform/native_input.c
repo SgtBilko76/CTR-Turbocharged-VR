@@ -856,17 +856,6 @@ internal void NativeInput_ApplyController(s32 slot)
 	snapshot->analog[1] = NativeInput_AxisToByte(rightY);
 	snapshot->analog[2] = NativeInput_AxisToByte(leftX);
 	snapshot->analog[3] = NativeInput_AxisToByte(leftY);
-#if defined(__ANDROID__)
-	// Quest diagnostics: what the game's pad snapshot gets from the stick.
-	{
-		static u32 s_questStickLogCounter;
-		if ((NativeInput_AxisIsActive(leftX) || NativeInput_AxisIsActive(leftY)) && ((s_questStickLogCounter++ % 120) == 0))
-		{
-			printf("[CTR Quest] pad slot %d: leftX %d leftY %d -> analog %02x %02x, id %d, buttons %04x\n", slot, leftX, leftY, snapshot->analog[2],
-			       snapshot->analog[3], snapshot->id, buttons);
-		}
-	}
-#endif
 }
 
 internal u16 NativeInput_ReadKeyboard(void)
