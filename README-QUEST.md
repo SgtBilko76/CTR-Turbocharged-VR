@@ -35,6 +35,8 @@ option is switched to native while `stereo=1`.
 
 ## Controls
 
+![CTR: Turbocharged VR controller mapping](docs/controls.webp)
+
 The Touch controllers act as a PlayStation pad; the game's own controller
 options can remap everything.
 
