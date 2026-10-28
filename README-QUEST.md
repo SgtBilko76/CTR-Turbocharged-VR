@@ -1,5 +1,7 @@
 # CTR: Turbocharged VR (Meta Quest)
 
+**Download, install guide, controls and pictures: [portroyale.online/ctr-turbocharged.html](https://portroyale.online/ctr-turbocharged.html)**
+
 Crash Team Racing: Turbocharged running natively on Meta Quest (tested on
 Quest 3), built from this repository's `quest` branch: the upstream 64-bit
 branch plus a GLES renderer path and an OpenXR layer. Races are in real 3D
